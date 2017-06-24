@@ -11,12 +11,13 @@
 #include <shark\Data\BatchInterface.h>
 #include <boost\numeric\ublas\operation.hpp>
 #include <thread>
-#include <time.h> 
+#include <time.h>
+#include <algorithm>
+#include <functional>
+#include "..\cryptopp\hex.h"
+#include "..\cryptopp\filters.h"
+#include "..\cryptopp\sha.h"
 
-
-int K;
-int L;
-int N;
 
 #define SL 1 // second layer
 #define FL 0 // first layer
@@ -26,6 +27,12 @@ using namespace std;
 using namespace boost::multiprecision;
 using namespace boost::random;
 using namespace boost::interprocess;
+
+int K;
+int L;
+int N;
+
+RealMatrix symmetric_key;
 
 struct StateTPM
 {
@@ -232,7 +239,7 @@ class Model_Ann
 	int output;
 public:
 	Model_Ann();
-	Model_Ann(std::vector<int> parms);
+	Model_Ann(std::vector<int> parms, int lim);
 	virtual ~Model_Ann() { }
 	FFNet<H, O>* getModel() const { return network; }
 	void HebbianFunction(vector<int> elements);
@@ -241,16 +248,18 @@ public:
 	void diagonal_hidden_layer(RealMatrix& matrix, RealMatrix& hidden_mat);
 	RealMatrix getParameterWeight()
 	{
+		symmetric_key = network->layerMatrix(0);
 		return network->layerMatrix(0);
 	}
 };
 
 template<class H, class I, class O>
-Model_Ann<H, I, O>::Model_Ann(std::vector<int> parms) :numOutput(1), network(new FFNet<H, O>()), output(1)
+Model_Ann<H, I, O>::Model_Ann(std::vector<int> parms, int lim) :network(new FFNet<H, O>()), output(1)
 {
-	numHidden = parms[0];
-	limit = parm[1];
-	numInput = parms[2];
+	numInput = parms[0];
+	numHidden = parms[1];
+	numOutput = parms[2];
+	limit = lim;
 	cout << "Building Model" << endl;
 	cout << "	" << numInput << " input neurons" << endl;
 	cout << "	" << numHidden << " hidden neurons" << endl;
@@ -377,7 +386,24 @@ void simulation(TPM& a, TPM& b)
 		if (comapreMatrices(a.TPMgetModel().getParameterWeight(), b.TPMgetModel().getParameterWeight()))
 		{
 			cout << "Success to synchronized two models" << endl;
-			cout << a.TPMgetModel().getParameterWeight() << endl;
+			cout << symmetric_key << endl;
+			int *arr= new int[symmetric_key.size1()*symmetric_key.size2()];
+			std::ostream_iterator<int> out_it(std::cout, ", ");
+			for (int i = 0; i < symmetric_key.size1(); i++)
+			{
+				for (int j = 0; j < symmetric_key.size2(); j++)
+					arr[i*symmetric_key.size2() + j] = symmetric_key(i, j);
+			}
+
+			string theString;
+			stringstream strStream(stringstream::in | stringstream::out);
+			for (int i = 0; i < symmetric_key.size1()*symmetric_key.size2(); i++)
+				strStream << arr[i];
+			theString = strStream.str();
+			CryptoPP::SHA1 sha1;
+			string hash = "";
+			CryptoPP::StringSource(theString, true, new CryptoPP::HashFilter(sha1, new CryptoPP::HexEncoder(new CryptoPP::StringSink(hash))));
+			cout <<"hash is: " << hash << endl;
 			state = StateTPM::OUTPUT_EQUAL;
 		}
 		else
@@ -397,17 +423,14 @@ void simulation(TPM& a, TPM& b)
 /////////////////////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv)
 { 
-	string mode;
 	switch (argc)
 	{
 	case 1:
-		mode = "default";
 		K = 10;
 		L = 3;
 		N = 3;
 		break;
 	case 4:
-		mode = "user"; 
 		K = atoi(argv[1]);
 		L = atoi(argv[2]);
 		N = atoi(argv[3]);
@@ -415,10 +438,17 @@ int main(int argc, char** argv)
 	default:
 		exit(1);
 	}
-	input = new Ann_Input();
-	TPM a("a");
-	TPM b("b");
-	simulation(a, b);
+	cout << "r- Run simulation, q- Quit" << endl;
+	char c;
+	cin >> c;
+	while (c != 'q')
+	{
+		input = new Ann_Input();
+		TPM a("a");
+		TPM b("b");
+		simulation(a, b);
+		cin >> c;
+	}
 	getchar();
 	return 0;
 }
